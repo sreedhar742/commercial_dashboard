@@ -7,7 +7,8 @@
 //    browser attaches those cookies.
 //  - On a 401, we transparently try POST /api/web-token/refresh/ once and retry.
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "https://backend.smartlearners.ai";
 
 /**
  * Low-level fetch wrapper. Always sends cookies. Attempts a single silent
@@ -122,4 +123,45 @@ export async function fetchExamMetadata(paramsOrUrl) {
       : `/api/exam-correction-metadata/${buildQuery(paramsOrUrl)}`;
   const response = await apiFetch(path, { method: "GET" });
   return parseJson(response);
+}
+
+/**
+ * Fetch the backend-calculated exam page buckets and correction cost.
+ * Table pagination is intentionally omitted because this endpoint aggregates
+ * every exam matching the active dashboard filters.
+ */
+export async function fetchExamCostSummary(params = {}) {
+  const { page_size: _pageSize, ...filters } = params;
+  const response = await apiFetch(
+    `/api/student-results-pages/${buildQuery({
+      ...filters,
+      summary: "1",
+    })}`,
+    { method: "GET" }
+  );
+  const data = await parseJson(response);
+
+  return {
+    count: Number(data?.total_exams || 0),
+    totals: {
+      b1to10: Number(data?.students_1_to_10 || 0),
+      b11to20: Number(data?.students_11_to_20 || 0),
+      b21to30: Number(data?.students_21_to_30 || 0),
+      above30: Number(data?.students_above_30 || 0),
+      totalPrice: Number(data?.total_price || 0),
+    },
+  };
+}
+
+/** Fetch compact student file details for one expanded exam row. */
+export async function fetchExamStudentDetails(examId) {
+  const response = await apiFetch(
+    `/api/student-results-pages/${buildQuery({
+      exam_id: examId,
+      details: "1",
+    })}`,
+    { method: "GET" }
+  );
+  const data = await parseJson(response);
+  return data?.student_results_details || {};
 }

@@ -55,7 +55,7 @@ export default function FilterBar({ onApply, loading }) {
             <span>Teacher username</span>
             <input
               type="text"
-              placeholder="e.g. testteacher"
+              placeholder="Username"
               value={values.teacher_username}
               onChange={(e) => update("teacher_username", e.target.value)}
             />

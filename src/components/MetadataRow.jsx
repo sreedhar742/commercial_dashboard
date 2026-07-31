@@ -2,6 +2,7 @@ import { useState } from "react";
 import { formatNumber, formatDate, formatInr } from "../utils/format.js";
 import { ChevronIcon, ExternalIcon, UsersIcon } from "./Icons.jsx";
 import ErrorBoundary from "./ErrorBoundary.jsx";
+import { fetchExamStudentDetails } from "../api/client.js";
 
 // Renders one exam metadata row plus an expandable detail panel showing the
 // per-student result files.
@@ -37,6 +38,23 @@ export function pageStats(item) {
     totalPrice: 0,
     hasData: false,
   };
+  const backendStats = item?.page_stats;
+  if (backendStats && typeof backendStats === "object") {
+    return {
+      totalPages:
+        backendStats.total_pages === null ||
+        backendStats.total_pages === undefined
+          ? null
+          : Number(backendStats.total_pages),
+      b1to10: Number(backendStats.students_1_to_10 || 0),
+      b11to20: Number(backendStats.students_11_to_20 || 0),
+      b21to30: Number(backendStats.students_21_to_30 || 0),
+      above30: Number(backendStats.students_above_30 || 0),
+      totalPrice: Number(backendStats.total_price || 0),
+      hasData: Boolean(backendStats.has_data),
+    };
+  }
+
   const details = item?.student_results_details;
   if (!details || typeof details !== "object") return empty;
 
@@ -159,8 +177,34 @@ function StudentResults({ details }) {
 
 export default function MetadataRow({ item, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [details, setDetails] = useState(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState(null);
   const exam = item.exam || {};
   const stats = pageStats(item);
+
+  async function loadDetails() {
+    if (!exam.id || detailsLoading) return;
+
+    setDetailsLoading(true);
+    setDetailsError(null);
+    try {
+      const nextDetails = await fetchExamStudentDetails(exam.id);
+      setDetails(nextDetails);
+    } catch (err) {
+      setDetailsError(err.message || "Failed to load student result files.");
+    } finally {
+      setDetailsLoading(false);
+    }
+  }
+
+  function toggleOpen() {
+    const nextOpen = !open;
+    setOpen(nextOpen);
+    if (nextOpen && details === null && !detailsLoading) {
+      loadDetails();
+    }
+  }
 
   return (
     <>
@@ -168,7 +212,7 @@ export default function MetadataRow({ item, defaultOpen = false }) {
         <td className="col-expand">
           <button
             className="expand-btn"
-            onClick={() => setOpen((o) => !o)}
+            onClick={toggleOpen}
             aria-expanded={open}
             aria-label={open ? "Collapse row" : "Expand row"}
           >
@@ -221,7 +265,24 @@ export default function MetadataRow({ item, defaultOpen = false }) {
               <div className="detail-panel">
                 <section className="detail-section">
                   <h4>Student result files</h4>
-                  <StudentResults details={item.student_results_details} />
+                  {detailsLoading && (
+                    <p className="muted">Loading student result files...</p>
+                  )}
+                  {!detailsLoading && detailsError && (
+                    <div className="alert alert-error">
+                      <span>{detailsError}</span>
+                      <button
+                        className="btn btn-ghost"
+                        type="button"
+                        onClick={loadDetails}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                  {!detailsLoading && !detailsError && details !== null && (
+                    <StudentResults details={details} />
+                  )}
                 </section>
               </div>
             </ErrorBoundary>

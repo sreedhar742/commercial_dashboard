@@ -31,7 +31,7 @@ export default function Login() {
         <form className="login-card" onSubmit={handleSubmit}>
           <h1 className="login-title">Correction Console</h1>
           <p className="login-subtitle">
-            Internal exam-correction audit - admin access only
+            SmartLearners exam correction audit
           </p>
 
           {error && (
@@ -48,7 +48,7 @@ export default function Login() {
               autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="e.g. testteacher"
+              placeholder="Username"
               required
               autoFocus
             />
