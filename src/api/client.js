@@ -7,7 +7,8 @@
 //    browser attaches those cookies.
 //  - On a 401, we transparently try POST /api/web-token/refresh/ once and retry.
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "https://backend.smartlearners.ai";
 
 /**
  * Low-level fetch wrapper. Always sends cookies. Attempts a single silent
