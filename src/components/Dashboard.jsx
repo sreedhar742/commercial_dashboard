@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext.jsx";
-import { fetchExamMetadata } from "../api/client.js";
-import { excludeHiddenExams } from "../utils/filters.js";
+import {
+  fetchExamCostSummary,
+  fetchExamMetadata,
+} from "../api/client.js";
 import FilterBar from "./FilterBar.jsx";
 import SummaryCards from "./SummaryCards.jsx";
 import MetadataTable from "./MetadataTable.jsx";
 import Pagination from "./Pagination.jsx";
 import { LogoutIcon, AlertIcon } from "./Icons.jsx";
-import { pageStats } from "./MetadataRow.jsx";
 
 const EMPTY_TOTALS = {
   b1to10: 0,
@@ -17,47 +18,11 @@ const EMPTY_TOTALS = {
   totalPrice: 0,
 };
 
-const SUMMARY_PAGE_SIZE = "500";
-
-function aggregateStats(results) {
-  return results.reduce(
-    (acc, item) => {
-      const stats = pageStats(item);
-      if (!stats.hasData) return acc;
-
-      acc.b1to10 += stats.b1to10;
-      acc.b11to20 += stats.b11to20;
-      acc.b21to30 += stats.b21to30;
-      acc.above30 += stats.above30;
-      acc.totalPrice += stats.totalPrice;
-      return acc;
-    },
-    { ...EMPTY_TOTALS }
-  );
-}
-
-function buildSummaryParams(values) {
-  return {
-    ...values,
-    page_size: SUMMARY_PAGE_SIZE,
-  };
-}
-
-async function fetchSummaryAcrossAllPages(initialParams) {
-  const firstPage = await fetchExamMetadata(initialParams);
-  const allResults = [...excludeHiddenExams(firstPage?.results || [])];
-
-  let nextUrl = firstPage?.next;
-  while (nextUrl) {
-    const nextPage = await fetchExamMetadata(nextUrl);
-    allResults.push(...excludeHiddenExams(nextPage?.results || []));
-    nextUrl = nextPage?.next;
+function requestErrorMessage(err, fallback) {
+  if (err?.status === 403) {
+    return "Only admin users can access exam correction metadata (403).";
   }
-
-  return {
-    count: allResults.length,
-    totals: aggregateStats(allResults),
-  };
+  return err?.message || fallback;
 }
 
 // Admin audit dashboard for the Exam Correction Metadata API.
@@ -69,59 +34,68 @@ export default function Dashboard() {
   const [filters, setFilters] = useState({ page_size: "20" });
   const [loading, setLoading] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [summaryLoaded, setSummaryLoaded] = useState(false);
+  const [pageError, setPageError] = useState(null);
+  const [summaryError, setSummaryError] = useState(null);
   const [summary, setSummary] = useState({ count: 0, totals: EMPTY_TOTALS });
 
   const loadPageOnly = useCallback(async (paramsOrUrl) => {
     setLoading(true);
-    setError(null);
+    setPageError(null);
     try {
       const data = await fetchExamMetadata(paramsOrUrl);
       setPage(data);
     } catch (err) {
-      if (err.status === 403) {
-        setError("Only admin users can access exam correction metadata (403).");
-      } else {
-        setError(err.message || "Failed to load metadata.");
-      }
+      setPageError(requestErrorMessage(err, "Failed to load metadata."));
     } finally {
       setLoading(false);
     }
   }, []);
 
-  const loadWithSummary = useCallback(async (values) => {
+  const loadWithSummary = useCallback((values) => {
     const requestId = ++requestIdRef.current;
     setLoading(true);
     setSummaryLoading(true);
-    setError(null);
+    setSummaryLoaded(false);
+    setPageError(null);
+    setSummaryError(null);
 
-    try {
-      const pagePromise = fetchExamMetadata(values);
-      const summaryPromise = fetchSummaryAcrossAllPages(buildSummaryParams(values));
+    fetchExamMetadata(values)
+      .then((firstPage) => {
+        if (requestIdRef.current === requestId) {
+          setPage(firstPage);
+        }
+      })
+      .catch((err) => {
+        if (requestIdRef.current === requestId) {
+          setPageError(requestErrorMessage(err, "Failed to load metadata."));
+        }
+      })
+      .finally(() => {
+        if (requestIdRef.current === requestId) {
+          setLoading(false);
+        }
+      });
 
-      const firstPage = await pagePromise;
-      if (requestIdRef.current !== requestId) return;
-
-      setPage(firstPage);
-      setLoading(false);
-
-      const nextSummary = await summaryPromise;
-      if (requestIdRef.current !== requestId) return;
-
-      setSummary(nextSummary);
-    } catch (err) {
-      if (requestIdRef.current !== requestId) return;
-      if (err.status === 403) {
-        setError("Only admin users can access exam correction metadata (403).");
-      } else {
-        setError(err.message || "Failed to load metadata.");
-      }
-    } finally {
-      if (requestIdRef.current === requestId) {
-        setLoading(false);
-        setSummaryLoading(false);
-      }
-    }
+    fetchExamCostSummary(values)
+      .then((nextSummary) => {
+        if (requestIdRef.current === requestId) {
+          setSummary(nextSummary);
+          setSummaryLoaded(true);
+        }
+      })
+      .catch((err) => {
+        if (requestIdRef.current === requestId) {
+          setSummaryError(
+            requestErrorMessage(err, "Failed to load cost summary.")
+          );
+        }
+      })
+      .finally(() => {
+        if (requestIdRef.current === requestId) {
+          setSummaryLoading(false);
+        }
+      });
   }, []);
 
   // Initial load.
@@ -137,8 +111,7 @@ export default function Dashboard() {
 
   const initials = (username || "?").slice(0, 2).toUpperCase();
 
-  // Hide student self-exams and HPS records client-side when the API returns them.
-  const results = excludeHiddenExams(page?.results || []);
+  const results = page?.results || [];
   const examCount = summary.count;
   const pageSize = Number(page?.page_size) || Number(filters.page_size) || 20;
 
@@ -172,17 +145,24 @@ export default function Dashboard() {
         <main className="main">
           <SummaryCards
             count={examCount}
-            hasData={!!page && !summaryLoading}
+            hasData={summaryLoaded}
             loading={summaryLoading}
             totals={summary.totals}
           />
 
           <FilterBar onApply={handleApply} loading={loading} />
 
-          {error && (
+          {pageError && (
             <div className="alert alert-error">
               <AlertIcon size={18} />
-              <span>{error}</span>
+              <span>{pageError}</span>
+            </div>
+          )}
+
+          {summaryError && (
+            <div className="alert alert-error">
+              <AlertIcon size={18} />
+              <span>{summaryError}</span>
             </div>
           )}
 
@@ -190,7 +170,11 @@ export default function Dashboard() {
 
           {page && (
             <Pagination
-              count={examCount || results.length}
+              count={
+                summaryLoaded
+                  ? examCount
+                  : Number(page.count || results.length)
+              }
               pageSize={pageSize}
               next={page.next}
               previous={page.previous}
